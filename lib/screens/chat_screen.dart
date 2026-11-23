@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/chat_message.dart';
+import '../services/claude_service.dart';
 import '../services/database_service.dart';
 import '../services/ollama_service.dart';
 import 'settings_screen.dart';
@@ -15,6 +16,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   final List<ChatMessage> _messages = [];
+  String _provider = 'ollama'; // 'ollama' atau 'claude'
   String _model = 'qwen3:4b';
   List<String> _models = [];
   bool _busy = false;
@@ -32,10 +34,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _initialize() async {
     _messages.addAll(await DatabaseService.instance.getMessages());
     final prefs = await SharedPreferences.getInstance();
+    _provider = prefs.getString('provider') ?? 'ollama';
     _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
     _systemPrompt = prefs.getString('system_prompt') ?? _systemPrompt;
     _temperature = prefs.getDouble('temperature') ?? _temperature;
-    _model = prefs.getString('selected_model') ?? _model;
+    _model = prefs.getString(_provider == 'claude' ? 'claude_model' : 'selected_model') ?? _model;
     await _refreshModels();
     if (mounted) setState(() {});
   }
@@ -43,15 +46,27 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _selectModel(String model) async {
     setState(() => _model = model);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('selected_model', model);
+    await prefs.setString(_provider == 'claude' ? 'claude_model' : 'selected_model', model);
   }
 
   Future<void> _refreshModels() async {
+    final prefs = await SharedPreferences.getInstance();
+    _provider = prefs.getString('provider') ?? 'ollama';
+    _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
+
+    if (_provider == 'claude') {
+      final hasKey = (prefs.getString('claude_api_key') ?? '').trim().isNotEmpty;
+      if (!mounted) return;
+      setState(() {
+        _models = ClaudeService.models;
+        if (!_models.contains(_model)) _model = _models.first;
+        _error = hasKey ? null : 'API key Claude belum diisi. Buka Pengaturan untuk memasukkannya.';
+      });
+      return;
+    }
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
-      final service = OllamaService(_baseUrl);
-      final models = await service.getModels();
+      final models = await OllamaService(_baseUrl).getModels();
       if (!mounted) return;
       setState(() {
         _models = models;
@@ -61,6 +76,25 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       if (mounted) setState(() => _error = 'Tidak dapat terhubung ke Ollama: $e');
     }
+  }
+
+  Future<String> _getAnswer(List<Map<String, String>> history) async {
+    if (_provider == 'claude') {
+      final prefs = await SharedPreferences.getInstance();
+      final key = prefs.getString('claude_api_key') ?? '';
+      return ClaudeService(key).chat(
+        model: _model,
+        messages: history,
+        systemPrompt: _systemPrompt,
+        temperature: _temperature,
+      );
+    }
+    return OllamaService(_baseUrl).chat(
+      model: _model,
+      messages: history,
+      systemPrompt: _systemPrompt,
+      temperature: _temperature,
+    );
   }
 
   Future<void> _send() async {
@@ -77,19 +111,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
+      _provider = prefs.getString('provider') ?? 'ollama';
       _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
       _systemPrompt = prefs.getString('system_prompt') ?? _systemPrompt;
       _temperature = prefs.getDouble('temperature') ?? _temperature;
-      // Hanya kirim 10 pesan terakhir agar muat di num_ctx 2048 dan tidak lambat di HP.
+      // Hanya kirim 10 pesan terakhir agar muat dan tidak lambat.
       final history = _messages.reversed.take(10).toList().reversed
           .map((m) => {'role': m.role, 'content': m.content})
           .toList();
-      final answer = await OllamaService(_baseUrl).chat(
-        model: _model,
-        messages: history,
-        systemPrompt: _systemPrompt,
-        temperature: _temperature,
-      );
+      final answer = await _getAnswer(history);
       final assistantMessage = ChatMessage(
         role: 'assistant', content: answer, createdAt: DateTime.now(),
       );
@@ -130,10 +160,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(children: [
-          Icon(Icons.auto_awesome, color: Color(0xFF19D7E6)),
-          SizedBox(width: 9),
-          Text('NDAX AI', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Row(children: [
+          const Icon(Icons.auto_awesome, color: Color(0xFF19D7E6)),
+          const SizedBox(width: 9),
+          const Text('NDAX AI', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          Text(
+            _provider == 'claude' ? 'Claude API' : 'Ollama',
+            style: const TextStyle(fontSize: 12, color: Colors.white54),
+          ),
         ]),
         actions: [
           IconButton(tooltip: 'Refresh model', onPressed: _refreshModels, icon: const Icon(Icons.refresh)),
@@ -155,7 +190,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: DropdownButton<String>(
                   isExpanded: true,
                   value: _models.contains(_model) ? _model : null,
-                  hint: Text(_models.isEmpty ? 'Tidak ada model - cek Ollama' : 'Pilih model'),
+                  hint: Text(_models.isEmpty ? 'Tidak ada model - cek pengaturan' : 'Pilih model'),
                   underline: const SizedBox(),
                   items: _models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
                   onChanged: _busy ? null : (v) => _selectModel(v ?? _model),
@@ -184,7 +219,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       SizedBox(height: 12),
                       Text('Halo! Saya NDAX AI.', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                       SizedBox(height: 6),
-                      Text('Pilih model Ollama lalu mulai bertanya.', style: TextStyle(color: Colors.white60)),
+                      Text('Pilih model lalu mulai bertanya.', style: TextStyle(color: Colors.white60)),
                     ],
                   ))
                 : ListView.builder(
