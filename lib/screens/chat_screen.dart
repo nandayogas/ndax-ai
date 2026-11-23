@@ -19,7 +19,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<String> _models = [];
   bool _busy = false;
   String _baseUrl = 'http://127.0.0.1:11434';
-  String _systemPrompt = 'Kamu adalah NDAX AI. Jawab dalam bahasa Indonesia dengan akurat dan jelas.';
+  String _systemPrompt = 'Kamu adalah NDAX AI. Jawab dalam bahasa Indonesia dengan akurat dan jelas. Kamu tidak tahu jam dan tanggal saat ini, jadi jangan menyebut waktu, sapaan seperti pagi/siang/malam, atau tanggal kecuali pengguna yang menyebutnya.';
   double _temperature = 0.7;
   String? _error;
 

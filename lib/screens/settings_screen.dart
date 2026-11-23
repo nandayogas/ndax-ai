@@ -10,7 +10,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _url = TextEditingController(text: 'http://127.0.0.1:11434');
   final _prompt = TextEditingController(
-    text: 'Kamu adalah NDAX AI, asisten pribadi yang fleksibel. Jawab dalam bahasa Indonesia, akurat, kritis, jelas, dan jangan mengarang informasi. Bantu pemrograman, analisis, teknologi, dan tugas umum. Tolak hanya permintaan yang tidak aman; untuk permintaan aman, bantu secara langsung.',
+    text: 'Kamu adalah NDAX AI, asisten pribadi yang fleksibel. Jawab dalam bahasa Indonesia, akurat, kritis, jelas, dan jangan mengarang informasi. Bantu pemrograman, analisis, teknologi, dan tugas umum. Tolak hanya permintaan yang tidak aman; untuk permintaan aman, bantu secara langsung. Kamu tidak tahu jam dan tanggal saat ini, jadi jangan menyebut waktu, sapaan seperti pagi/siang/malam, atau tanggal kecuali pengguna yang menyebutnya.',
   );
   double _temperature = 0.7;
   bool _loaded = false;
