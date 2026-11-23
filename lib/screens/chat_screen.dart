@@ -35,8 +35,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
     _systemPrompt = prefs.getString('system_prompt') ?? _systemPrompt;
     _temperature = prefs.getDouble('temperature') ?? _temperature;
+    _model = prefs.getString('selected_model') ?? _model;
     await _refreshModels();
     if (mounted) setState(() {});
+  }
+
+  Future<void> _selectModel(String model) async {
+    setState(() => _model = model);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('selected_model', model);
   }
 
   Future<void> _refreshModels() async {
@@ -73,7 +80,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
       _systemPrompt = prefs.getString('system_prompt') ?? _systemPrompt;
       _temperature = prefs.getDouble('temperature') ?? _temperature;
-      final history = _messages.map((m) => {'role': m.role, 'content': m.content}).toList();
+      // Hanya kirim 10 pesan terakhir agar muat di num_ctx 2048 dan tidak lambat di HP.
+      final history = _messages.reversed.take(10).toList().reversed
+          .map((m) => {'role': m.role, 'content': m.content})
+          .toList();
       final answer = await OllamaService(_baseUrl).chat(
         model: _model,
         messages: history,
@@ -148,7 +158,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   hint: Text(_models.isEmpty ? 'Tidak ada model - cek Ollama' : 'Pilih model'),
                   underline: const SizedBox(),
                   items: _models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-                  onChanged: _busy ? null : (v) => setState(() => _model = v ?? _model),
+                  onChanged: _busy ? null : (v) => _selectModel(v ?? _model),
                 ),
               ),
               if (_busy) const Padding(

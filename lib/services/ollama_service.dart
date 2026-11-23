@@ -8,7 +8,7 @@ class OllamaService {
   Uri _uri(String path) => Uri.parse('${baseUrl.trim().replaceAll(RegExp(r'/+$'), '')}$path');
 
   Future<List<String>> getModels() async {
-    final response = await http.get(_uri('/api/tags')).timeout(const Duration(seconds: 15));
+    final response = await http.get(_uri('/api/tags')).timeout(const Duration(seconds: 45));
     if (response.statusCode != 200) {
       throw Exception('Ollama HTTP ${response.statusCode}: ${response.body}');
     }
