@@ -63,3 +63,10 @@ This starter includes chat, model listing, editable Ollama URL, system prompt, t
 
 ## Claude API
 Pilih **Claude API** di menu Pengaturan, lalu masukkan API key Anda (dari console.anthropic.com). Model yang tersedia: `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`. Key disimpan lokal di perangkat dan tidak ikut di repository. Untuk distribusi publik, sebaiknya gunakan backend proxy agar key tidak tersimpan di APK.
+
+## API Key Universal
+Satu kolom API key untuk semua penyedia. Penyedia dikenali otomatis dari awalan key:
+- `sk-ant-...` → Claude (Anthropic)
+- `sk-or-...` → OpenRouter
+- `sk-...` lainnya → OpenAI
+- Kosong → Ollama lokal

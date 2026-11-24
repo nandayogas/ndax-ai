@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/chat_message.dart';
-import '../services/claude_service.dart';
+import '../services/ai_router.dart';
 import '../services/database_service.dart';
 import '../services/ollama_service.dart';
 import 'settings_screen.dart';
@@ -16,13 +16,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   final List<ChatMessage> _messages = [];
-  String _provider = 'ollama'; // 'ollama' atau 'claude'
-  String _model = 'qwen3:4b';
-  List<String> _models = [];
-  bool _busy = false;
+  String _apiKey = '';
   String _baseUrl = 'http://127.0.0.1:11434';
   String _systemPrompt = 'Kamu adalah NDAX AI. Jawab dalam bahasa Indonesia dengan akurat dan jelas. Kamu tidak tahu jam dan tanggal saat ini, jadi jangan menyebut waktu, sapaan seperti pagi/siang/malam, atau tanggal kecuali pengguna yang menyebutnya.';
   double _temperature = 0.7;
+  AiProvider _provider = AiProvider.ollama;
+  String _model = '';
+  List<String> _models = [];
+  bool _busy = false;
   String? _error;
 
   @override
@@ -33,68 +34,77 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _initialize() async {
     _messages.addAll(await DatabaseService.instance.getMessages());
+    await _refreshModels();
+    if (mounted) setState(() {});
+  }
+
+  /// Membaca semua pengaturan terbaru dari penyimpanan.
+  Future<SharedPreferences> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    _provider = prefs.getString('provider') ?? 'ollama';
+    _apiKey = prefs.getString('api_key') ?? prefs.getString('claude_api_key') ?? '';
     _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
     _systemPrompt = prefs.getString('system_prompt') ?? _systemPrompt;
     _temperature = prefs.getDouble('temperature') ?? _temperature;
-    _model = prefs.getString(_provider == 'claude' ? 'claude_model' : 'selected_model') ?? _model;
-    await _refreshModels();
-    if (mounted) setState(() {});
+    return prefs;
+  }
+
+  Future<void> _refreshModels() async {
+    final prefs = await _loadPrefs();
+    final provider = AiRouter.detect(_apiKey);
+
+    if (provider == AiProvider.unknown) {
+      if (!mounted) return;
+      setState(() {
+        _provider = provider;
+        _models = [];
+        _error = 'Format API key tidak dikenali. Buka Pengaturan dan periksa key Anda.';
+      });
+      return;
+    }
+
+    if (provider == AiProvider.ollama) {
+      try {
+        final models = await OllamaService(_baseUrl).getModels();
+        if (!mounted) return;
+        setState(() {
+          _provider = provider;
+          _models = models;
+          _model = _pickModel(prefs, provider, models);
+          _error = null;
+        });
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _provider = provider;
+            _models = [];
+            _error = 'Tidak dapat terhubung ke Ollama: $e';
+          });
+        }
+      }
+      return;
+    }
+
+    final models = AiRouter.modelsFor(provider);
+    if (!mounted) return;
+    setState(() {
+      _provider = provider;
+      _models = models;
+      _model = _pickModel(prefs, provider, models);
+      _error = null;
+    });
+  }
+
+  /// Memakai model tersimpan untuk penyedia ini, atau model pertama jika belum ada.
+  String _pickModel(SharedPreferences prefs, AiProvider provider, List<String> models) {
+    final saved = prefs.getString('model_${provider.name}');
+    if (saved != null && models.contains(saved)) return saved;
+    return models.isNotEmpty ? models.first : '';
   }
 
   Future<void> _selectModel(String model) async {
     setState(() => _model = model);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_provider == 'claude' ? 'claude_model' : 'selected_model', model);
-  }
-
-  Future<void> _refreshModels() async {
-    final prefs = await SharedPreferences.getInstance();
-    _provider = prefs.getString('provider') ?? 'ollama';
-    _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
-
-    if (_provider == 'claude') {
-      final hasKey = (prefs.getString('claude_api_key') ?? '').trim().isNotEmpty;
-      if (!mounted) return;
-      setState(() {
-        _models = ClaudeService.models;
-        if (!_models.contains(_model)) _model = _models.first;
-        _error = hasKey ? null : 'API key Claude belum diisi. Buka Pengaturan untuk memasukkannya.';
-      });
-      return;
-    }
-
-    try {
-      final models = await OllamaService(_baseUrl).getModels();
-      if (!mounted) return;
-      setState(() {
-        _models = models;
-        if (_models.isNotEmpty && !_models.contains(_model)) _model = _models.first;
-        _error = null;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Tidak dapat terhubung ke Ollama: $e');
-    }
-  }
-
-  Future<String> _getAnswer(List<Map<String, String>> history) async {
-    if (_provider == 'claude') {
-      final prefs = await SharedPreferences.getInstance();
-      final key = prefs.getString('claude_api_key') ?? '';
-      return ClaudeService(key).chat(
-        model: _model,
-        messages: history,
-        systemPrompt: _systemPrompt,
-        temperature: _temperature,
-      );
-    }
-    return OllamaService(_baseUrl).chat(
-      model: _model,
-      messages: history,
-      systemPrompt: _systemPrompt,
-      temperature: _temperature,
-    );
+    await prefs.setString('model_${_provider.name}', model);
   }
 
   Future<void> _send() async {
@@ -110,16 +120,19 @@ class _ChatScreenState extends State<ChatScreen> {
     await DatabaseService.instance.addMessage(userMessage);
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _provider = prefs.getString('provider') ?? 'ollama';
-      _baseUrl = prefs.getString('ollama_url') ?? _baseUrl;
-      _systemPrompt = prefs.getString('system_prompt') ?? _systemPrompt;
-      _temperature = prefs.getDouble('temperature') ?? _temperature;
+      await _loadPrefs();
       // Hanya kirim 10 pesan terakhir agar muat dan tidak lambat.
       final history = _messages.reversed.take(10).toList().reversed
           .map((m) => {'role': m.role, 'content': m.content})
           .toList();
-      final answer = await _getAnswer(history);
+      final answer = await AiRouter.chat(
+        apiKey: _apiKey,
+        ollamaUrl: _baseUrl,
+        model: _model,
+        messages: history,
+        systemPrompt: _systemPrompt,
+        temperature: _temperature,
+      );
       final assistantMessage = ChatMessage(
         role: 'assistant', content: answer, createdAt: DateTime.now(),
       );
@@ -166,7 +179,7 @@ class _ChatScreenState extends State<ChatScreen> {
           const Text('NDAX AI', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
           Text(
-            _provider == 'claude' ? 'Claude API' : 'Ollama',
+            AiRouter.label(_provider),
             style: const TextStyle(fontSize: 12, color: Colors.white54),
           ),
         ]),
